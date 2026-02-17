@@ -1,80 +1,55 @@
-from Autodesk.Revit.DB import (
-    BuiltInCategory,
-    DirectShape,
-    ElementTransformUtils,
-    FilteredElementCollector,
-    Line,
-    LocationPoint,
-    XYZ,
-)
+import os
+import sys
+
+from Autodesk.Revit.DB import ElementTransformUtils, Line, XYZ
 from pyrevit import revit, forms
 
 
 doc = revit.doc
 
+this_dir = os.path.dirname(__file__)
+ext_dir = os.path.abspath(os.path.join(this_dir, "..", "..", ".."))
+lib_dir = os.path.join(ext_dir, "lib")
+if os.path.isdir(lib_dir) and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+
+try:
+    import rubiks_state
+except Exception as ex:
+    forms.alert("State module not found in lib folder.\n\n{}".format(ex), exitscript=True)
+
 origin = XYZ(0, 0, 0)
-axis = Line.CreateBound(origin, XYZ(0, -10, 0))
+axis = Line.CreateBound(origin, XYZ(0, 10, 0))
 angle_radians = -1.57079632679
 
 cubie_size_ft = 1.0
-back_layer_y_ft = -cubie_size_ft
-y_tolerance = 0.05
+layer_value = cubie_size_ft
+layer_tolerance = 0.05
 
-
-def get_element_center(element):
-    loc = element.Location
-    if isinstance(loc, LocationPoint):
-        return loc.Point
-
-    bbox = element.get_BoundingBox(None)
-    if bbox:
-        return (bbox.Min + bbox.Max) * 0.5
-
-    return None
-
-
-all_generic_instances = (
-    FilteredElementCollector(doc)
-    .OfCategory(BuiltInCategory.OST_GenericModel)
-    .WhereElementIsNotElementType()
-    .ToElements()
-)
-
-cubies_with_points = []
-for elem in all_generic_instances:
-    if not isinstance(elem, DirectShape):
-        continue
-    point = get_element_center(elem)
-    if point:
-        cubies_with_points.append((elem, point))
-
-if not cubies_with_points:
-    forms.alert(
-        "No DirectShape cubies found in Generic Models.",
-        exitscript=True,
-    )
+# Requires explicit Initialize and validates 26 unique marked target cubies.
+rubiks_state.ensure_state(doc, require_initialized=True)
+cubies_with_points = rubiks_state.collect_target_cubies(doc)
 
 if len(cubies_with_points) != 26:
-    forms.alert(
-        "Expected 26 DirectShape cubies, found {}.".format(len(cubies_with_points)),
-        exitscript=True,
-    )
+    forms.alert("Expected 26 target cubies, found {}.".format(len(cubies_with_points)), exitscript=True)
 
-back_layer = [elem for elem, point in cubies_with_points if abs(point.Y - back_layer_y_ft) <= y_tolerance]
+if "Y" == "X":
+    face_layer = [elem for elem, point, _ in cubies_with_points if abs(point.X - layer_value) <= layer_tolerance]
+elif "Y" == "Y":
+    face_layer = [elem for elem, point, _ in cubies_with_points if abs(point.Y - layer_value) <= layer_tolerance]
+else:
+    face_layer = [elem for elem, point, _ in cubies_with_points if abs(point.Z - layer_value) <= layer_tolerance]
 
-if len(back_layer) != 9:
-    forms.alert(
-        "Expected 9 cubies in back layer at Y = -1.0 ft, found {}.".format(len(back_layer)),
-        exitscript=True,
-    )
+if len(face_layer) != 9:
+    forms.alert("Expected 9 cubies in Back layer, found {}.".format(len(face_layer)), exitscript=True)
 
-with revit.Transaction("Rotate Back Face"):
-    failed_ids = []
-    for cubey in back_layer:
-        try:
+try:
+    with revit.Transaction("Rotate Back Face"):
+        for cubey in face_layer:
             ElementTransformUtils.RotateElement(doc, cubey.Id, axis, angle_radians)
-        except Exception:
-            failed_ids.append(cubey.Id.IntegerValue)
-
-if failed_ids:
-    forms.alert("Back rotation failed for ids: {}".format(", ".join(str(x) for x in failed_ids)))
+        rubiks_state.apply_move(doc, "B")
+except Exception as ex:
+    forms.alert(
+        "Back rotation/state update failed.\n\n{}".format(ex),
+        exitscript=True,
+    )
