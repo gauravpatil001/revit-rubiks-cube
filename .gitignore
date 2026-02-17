@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+.piptemp/
+.tmp-pip/
+
+Rubiks Cube.extension/lib/cube_state.json
