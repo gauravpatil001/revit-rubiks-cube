@@ -1,5 +1,3 @@
-import types
-
 from Autodesk.Revit.DB import (
     BuiltInCategory,
     BuiltInParameter,
@@ -11,27 +9,16 @@ from Autodesk.Revit.DB.ExtensibleStorage import AccessLevel, Entity, Schema, Sch
 from pyrevit import forms
 from System import Guid, String
 
-# rubik-solver expects past.builtins.basestring on older code paths.
-import sys
-if "past" not in sys.modules:
-    past_mod = types.ModuleType("past")
-    builtins_mod = types.ModuleType("past.builtins")
-    builtins_mod.basestring = str
-    past_mod.builtins = builtins_mod
-    sys.modules["past"] = past_mod
-    sys.modules["past.builtins"] = builtins_mod
-
-from rubik_solver.Cubie import Cube
-from rubik_solver.Move import Move
-from rubik_solver.NaiveCube import NaiveCube
-from rubik_solver import utils as rubik_utils
-
-
-# New GUID to avoid collisions with earlier schema attempts.
-SCHEMA_GUID = Guid("8F6E6F6A-AB10-4A6E-9B97-0DF4B7C7C40F")
+# New GUID (schema v3) for strict project-bound state.
+SCHEMA_GUID = Guid("6A22FE1F-C4AF-4E74-8A5C-1D1F8946E1D7")
 FIELD_CONFIG = "config"
 FIELD_SIGNATURE = "mark_signature"
+FIELD_PROJECT_KEY = "project_key"
 TARGET_COMMENTS = "Cubeys"
+CUBIE_SIZE_FT = 1.0
+GRID_TOLERANCE_FT = 0.2
+SOLVED_CONFIG = "yyyyyyyyybbbbbbbbbrrrrrrrrrgggggggggooooooooowwwwwwwww"
+_solver_cache = None
 
 
 def _get_center(element):
@@ -81,7 +68,58 @@ def _collect_target_cubies(doc):
 
 
 def _solved_config():
-    return Cube().to_naive_cube().get_cube()
+    return SOLVED_CONFIG
+
+
+def _get_solver_modules():
+    global _solver_cache
+    if _solver_cache:
+        return _solver_cache
+
+    import sys
+    import types
+
+    # rubik-solver expects past.builtins.basestring on older code paths.
+    if "past" not in sys.modules:
+        past_mod = types.ModuleType("past")
+        builtins_mod = types.ModuleType("past.builtins")
+        builtins_mod.basestring = str
+        past_mod.builtins = builtins_mod
+        sys.modules["past"] = past_mod
+        sys.modules["past.builtins"] = builtins_mod
+
+    from rubik_solver.Cubie import Cube
+    from rubik_solver.Move import Move
+    from rubik_solver.NaiveCube import NaiveCube
+    from rubik_solver import utils as rubik_utils
+
+    _solver_cache = (Cube, Move, NaiveCube, rubik_utils)
+    return _solver_cache
+
+
+def _project_key(doc):
+    path = (doc.PathName or "").strip().lower()
+    proj_uid = (doc.ProjectInformation.UniqueId or "").strip().lower()
+    if path:
+        return "path:{}|proj:{}".format(path, proj_uid)
+    return "title:{}|proj:{}".format((doc.Title or "").strip().lower(), proj_uid)
+
+
+def _nearest_grid_value(value):
+    candidates = (-CUBIE_SIZE_FT, 0.0, CUBIE_SIZE_FT)
+    best = min(candidates, key=lambda c: abs(value - c))
+    if abs(value - best) > GRID_TOLERANCE_FT:
+        return None
+    return best
+
+
+def _grid_slot(point):
+    gx = _nearest_grid_value(point.X)
+    gy = _nearest_grid_value(point.Y)
+    gz = _nearest_grid_value(point.Z)
+    if gx is None or gy is None or gz is None:
+        return None
+    return (gx, gy, gz)
 
 
 def _get_schema():
@@ -95,6 +133,7 @@ def _get_schema():
     builder.SetWriteAccessLevel(AccessLevel.Public)
     builder.AddSimpleField(FIELD_CONFIG, String)
     builder.AddSimpleField(FIELD_SIGNATURE, String)
+    builder.AddSimpleField(FIELD_PROJECT_KEY, String)
     return builder.Finish()
 
 
@@ -112,18 +151,21 @@ def _load_state(doc):
 
     field_config = schema.GetField(FIELD_CONFIG)
     field_sig = schema.GetField(FIELD_SIGNATURE)
-    if field_config is None or field_sig is None:
+    field_proj = schema.GetField(FIELD_PROJECT_KEY)
+    if field_config is None or field_sig is None or field_proj is None:
         return None
 
     try:
         config = ent.Get[String](field_config)
         signature = ent.Get[String](field_sig)
+        project_key = ent.Get[String](field_proj)
     except Exception:
         return None
 
     return {
         "config": config,
         "mark_signature": signature,
+        "project_key": project_key,
     }
 
 
@@ -137,10 +179,12 @@ def _save_state(doc, state):
     ent = Entity(schema)
     ent.Set[String](schema.GetField(FIELD_CONFIG), state["config"])
     ent.Set[String](schema.GetField(FIELD_SIGNATURE), state["mark_signature"])
+    ent.Set[String](schema.GetField(FIELD_PROJECT_KEY), state["project_key"])
     host.SetEntity(ent)
 
 
 def _build_cube_from_config(config):
+    Cube, _, NaiveCube, _ = _get_solver_modules()
     nc = NaiveCube()
     nc.set_cube(config)
     c = Cube()
@@ -177,6 +221,7 @@ def ensure_state(doc, exitscript_on_error=True, require_initialized=False):
         raise Exception(msg)
 
     signature = "|".join(sorted(marks))
+    project_key = _project_key(doc)
     state = _load_state(doc)
     if not state:
         msg = "State is not initialized. Click 'Initialize' before rotating or solving."
@@ -187,6 +232,23 @@ def ensure_state(doc, exitscript_on_error=True, require_initialized=False):
         state = {
             "config": _solved_config(),
             "mark_signature": signature,
+            "project_key": project_key,
+        }
+        return state
+
+    if state.get("project_key") != project_key:
+        msg = (
+            "Saved state belongs to a different Revit project. "
+            "Click 'Initialize' in this project."
+        )
+        if require_initialized:
+            if exitscript_on_error:
+                forms.alert(msg, exitscript=True)
+            raise Exception(msg)
+        state = {
+            "config": _solved_config(),
+            "mark_signature": signature,
+            "project_key": project_key,
         }
         return state
 
@@ -202,11 +264,13 @@ def ensure_state(doc, exitscript_on_error=True, require_initialized=False):
         state = {
             "config": _solved_config(),
             "mark_signature": signature,
+            "project_key": project_key,
         }
     return state
 
 
 def apply_move(doc, move_notation):
+    _, Move, _, _ = _get_solver_modules()
     state = ensure_state(doc, exitscript_on_error=False, require_initialized=True)
     cube = _build_cube_from_config(state["config"])
     cube.move(Move(move_notation))
@@ -216,6 +280,7 @@ def apply_move(doc, move_notation):
 
 
 def solve_current(doc):
+    _, _, _, rubik_utils = _get_solver_modules()
     state = ensure_state(doc, exitscript_on_error=False, require_initialized=True)
     if state.get("config") == _solved_config():
         return ""
@@ -250,6 +315,7 @@ def initialize_state(doc, exitscript_on_error=True):
     state = {
         "config": _solved_config(),
         "mark_signature": "|".join(sorted(marks)),
+        "project_key": _project_key(doc),
     }
     _save_state(doc, state)
     return state
@@ -263,6 +329,47 @@ def validate_state(doc):
     report.append("Target cubies (Comments='{}'): {}".format(TARGET_COMMENTS, len(cubies)))
     if len(cubies) != 26:
         ok = False
+
+    # Strict geometry checks to avoid false positives.
+    slots = []
+    bad_slot = False
+    for _, pt, _ in cubies:
+        s = _grid_slot(pt)
+        if s is None:
+            bad_slot = True
+        else:
+            slots.append(s)
+    if bad_slot:
+        ok = False
+        report.append("Some cubies are not near the expected -1/0/+1 grid.")
+    else:
+        report.append("All cubies are near expected -1/0/+1 grid.")
+
+    if slots:
+        if len(set(slots)) != len(slots):
+            ok = False
+            report.append("Duplicate cubie grid slots found.")
+        else:
+            report.append("All cubies occupy unique grid slots.")
+
+        if (0.0, 0.0, 0.0) in set(slots):
+            ok = False
+            report.append("Center slot (0,0,0) is occupied; expected 26-cubie shell.")
+        else:
+            report.append("Center slot is empty as expected.")
+
+        for axis_name, idx in (("X", 0), ("Y", 1), ("Z", 2)):
+            counts = {-1.0: 0, 0.0: 0, 1.0: 0}
+            for s in slots:
+                counts[s[idx]] += 1
+            if counts[-1.0] != 9 or counts[0.0] != 8 or counts[1.0] != 9:
+                ok = False
+                report.append(
+                    "{} layer counts invalid (-1/0/+1 = {}/{}/{}; expected 9/8/9)."
+                    .format(axis_name, counts[-1.0], counts[0.0], counts[1.0])
+                )
+            else:
+                report.append("{} layer counts valid (9/8/9).".format(axis_name))
 
     marks = [m for _, _, m in cubies]
     if any(not m for m in marks):
@@ -284,6 +391,12 @@ def validate_state(doc):
         return ok, report
 
     report.append("Saved state found.")
+    if state.get("project_key") != _project_key(doc):
+        ok = False
+        report.append("Saved state belongs to a different project.")
+    else:
+        report.append("Saved state is bound to this project.")
+
     signature = "|".join(sorted(marks))
     if state.get("mark_signature") != signature:
         ok = False
@@ -297,5 +410,21 @@ def validate_state(doc):
         report.append("Saved config length is {}, expected 54.".format(len(config)))
     else:
         report.append("Saved config length is valid (54).")
+
+    allowed = set("wrgbyo")
+    if not config or any(ch not in allowed for ch in config):
+        ok = False
+        report.append("Saved config contains invalid color symbols.")
+    else:
+        bad_counts = []
+        for ch in sorted(allowed):
+            cnt = config.count(ch)
+            if cnt != 9:
+                bad_counts.append("{}={}".format(ch, cnt))
+        if bad_counts:
+            ok = False
+            report.append("Saved config color counts invalid: {}.".format(", ".join(bad_counts)))
+        else:
+            report.append("Saved config color counts are valid (9 each).")
 
     return ok, report
