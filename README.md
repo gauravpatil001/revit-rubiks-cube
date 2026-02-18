@@ -4,6 +4,10 @@ Turn Revit into a puzzle-solving playground. This pyRevit toolset allows you to 
 
 This extension brings the logic of the world's most famous puzzle to the world's most famous BIM software, complete with live rotations and a built-in solver.
 
+<img width="1919" height="1044" alt="1" src="https://github.com/user-attachments/assets/90767afa-1215-4bcc-a7bd-19394f958614" />
+
+<img width="1917" height="1044" alt="2" src="https://github.com/user-attachments/assets/f8240320-d34c-416a-80e4-38c3eca626f2" />
+
 ## What It Does
 
 Live Rotations: Dedicated ribbon buttons for all standard face turns (U/D/L/R/F/B) in both clockwise and counter-clockwise directions.
