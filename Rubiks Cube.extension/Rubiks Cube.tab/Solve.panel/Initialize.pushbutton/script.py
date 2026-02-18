@@ -6,6 +6,7 @@ from pyrevit import forms, revit
 
 doc = revit.doc
 
+# Load extension-local libs so this button works without global installs.
 this_dir = os.path.dirname(__file__)
 ext_dir = os.path.abspath(os.path.join(this_dir, "..", "..", ".."))
 lib_dir = os.path.join(ext_dir, "lib")
@@ -21,6 +22,7 @@ except Exception as ex:
     )
 
 try:
+    # Persist solved baseline in a single undo-aware Revit transaction.
     with revit.Transaction("Initialize Rubik Solver State"):
         rubiks_state.initialize_state(doc)
 except Exception as ex:

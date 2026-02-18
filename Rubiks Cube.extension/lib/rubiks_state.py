@@ -22,6 +22,7 @@ _solver_cache = None
 
 
 def _get_center(element):
+    # DirectShape may expose either LocationPoint or only a bounding box.
     loc = element.Location
     if isinstance(loc, LocationPoint):
         return loc.Point
@@ -48,6 +49,7 @@ def _get_comments(element):
 
 
 def _collect_target_cubies(doc):
+    # Restrict scope to the dedicated Rubik cubies only.
     elems = (
         FilteredElementCollector(doc)
         .OfCategory(BuiltInCategory.OST_GenericModel)
@@ -98,6 +100,7 @@ def _get_solver_modules():
 
 
 def _project_key(doc):
+    # Tie saved state to this specific Revit project, not just element names.
     path = (doc.PathName or "").strip().lower()
     proj_uid = (doc.ProjectInformation.UniqueId or "").strip().lower()
     if path:
@@ -123,6 +126,7 @@ def _grid_slot(point):
 
 
 def _get_schema():
+    # Reuse schema if it already exists in the document session.
     schema = Schema.Lookup(SCHEMA_GUID)
     if schema:
         return schema
@@ -143,15 +147,22 @@ def _get_state_host(doc):
 
 
 def _load_state(doc):
+    # Read persisted state from ProjectInformation extensible storage.
     schema = _get_schema()
     host = _get_state_host(doc)
     ent = host.GetEntity(schema)
     if not ent or not ent.IsValid():
         return None
 
-    field_config = schema.GetField(FIELD_CONFIG)
-    field_sig = schema.GetField(FIELD_SIGNATURE)
-    field_proj = schema.GetField(FIELD_PROJECT_KEY)
+    # Pull fields from the Entity's own schema to avoid mismatches with
+    # stale/legacy schema objects after upgrades or undo/redo boundaries.
+    ent_schema = ent.Schema
+    if ent_schema is None:
+        return None
+
+    field_config = ent_schema.GetField(FIELD_CONFIG)
+    field_sig = ent_schema.GetField(FIELD_SIGNATURE)
+    field_proj = ent_schema.GetField(FIELD_PROJECT_KEY)
     if field_config is None or field_sig is None or field_proj is None:
         return None
 
@@ -184,6 +195,7 @@ def _save_state(doc, state):
 
 
 def _build_cube_from_config(config):
+    # Build Cubie representation from the stored 54-char facelet config.
     Cube, _, NaiveCube, _ = _get_solver_modules()
     nc = NaiveCube()
     nc.set_cube(config)
@@ -197,6 +209,7 @@ def collect_target_cubies(doc):
 
 
 def ensure_state(doc, exitscript_on_error=True, require_initialized=False):
+    # Validate cubie population and identity before any move/solve call.
     cubies = _collect_target_cubies(doc)
     if len(cubies) != 26:
         msg = (
@@ -270,6 +283,7 @@ def ensure_state(doc, exitscript_on_error=True, require_initialized=False):
 
 
 def apply_move(doc, move_notation):
+    # Apply move to saved config inside the same transaction as geometry.
     _, Move, _, _ = _get_solver_modules()
     state = ensure_state(doc, exitscript_on_error=False, require_initialized=True)
     cube = _build_cube_from_config(state["config"])
@@ -280,6 +294,7 @@ def apply_move(doc, move_notation):
 
 
 def solve_current(doc):
+    # Return notation only; geometry is changed by rotation buttons.
     _, _, _, rubik_utils = _get_solver_modules()
     state = ensure_state(doc, exitscript_on_error=False, require_initialized=True)
     if state.get("config") == _solved_config():
@@ -289,6 +304,7 @@ def solve_current(doc):
 
 
 def initialize_state(doc, exitscript_on_error=True):
+    # Fast reset: trust user-provided baseline and set solved state directly.
     cubies = _collect_target_cubies(doc)
     if len(cubies) != 26:
         msg = (

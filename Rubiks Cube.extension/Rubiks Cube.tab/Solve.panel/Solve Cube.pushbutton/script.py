@@ -6,6 +6,7 @@ from pyrevit import forms, revit
 
 doc = revit.doc
 
+# Load extension-local helper module and bundled solver dependencies.
 this_dir = os.path.dirname(__file__)
 ext_dir = os.path.abspath(os.path.join(this_dir, "..", "..", ".."))
 lib_dir = os.path.join(ext_dir, "lib")
@@ -21,8 +22,9 @@ except Exception as ex:
     )
 
 try:
-    # Ensures 26 DirectShape cubies with unique Mark values are present.
+    # Ensure preconditions before attempting a solve.
     rubiks_state.ensure_state(doc, require_initialized=True)
+    # Compute move notation from the currently tracked cube state.
     solution = rubiks_state.solve_current(doc)
 except Exception as ex:
     forms.alert(

@@ -7,6 +7,7 @@ from pyrevit import revit, forms
 
 doc = revit.doc
 
+# Ensure extension-local libraries (state + solver wrappers) are importable.
 this_dir = os.path.dirname(__file__)
 ext_dir = os.path.abspath(os.path.join(this_dir, "..", "..", ".."))
 lib_dir = os.path.join(ext_dir, "lib")
@@ -18,21 +19,24 @@ try:
 except Exception as ex:
     forms.alert("State module not found in lib folder.\n\n{}".format(ex), exitscript=True)
 
+# Rotation axis passes through project internal origin.
 origin = XYZ(0, 0, 0)
 axis = Line.CreateBound(origin, XYZ(0, -10, 0))
 angle_radians = 1.57079632679
 
+# Cubie centers are expected at -1/0/+1 feet from origin.
 cubie_size_ft = 1.0
 layer_value = -cubie_size_ft
 layer_tolerance = 0.05
 
-# Requires explicit Initialize and validates 26 unique marked target cubies.
+# Require explicit Initialize and validate target cubie identity set.
 rubiks_state.ensure_state(doc, require_initialized=True)
 cubies_with_points = rubiks_state.collect_target_cubies(doc)
 
 if len(cubies_with_points) != 26:
     forms.alert("Expected 26 target cubies, found {}.".format(len(cubies_with_points)), exitscript=True)
 
+# Pick the 9 cubies on the requested face layer.
 if "Y" == "X":
     face_layer = [elem for elem, point, _ in cubies_with_points if abs(point.X - layer_value) <= layer_tolerance]
 elif "Y" == "Y":
@@ -44,6 +48,7 @@ if len(face_layer) != 9:
     forms.alert("Expected 9 cubies in Front layer, found {}.".format(len(face_layer)), exitscript=True)
 
 try:
+    # Geometry rotation and logical state update happen in one transaction so Undo stays consistent.
     with revit.Transaction("Rotate Front Face CCW"):
         for cubey in face_layer:
             ElementTransformUtils.RotateElement(doc, cubey.Id, axis, angle_radians)
@@ -53,4 +58,3 @@ except Exception as ex:
         "Front CCW rotation/state update failed.\n\n{}".format(ex),
         exitscript=True,
     )
-
