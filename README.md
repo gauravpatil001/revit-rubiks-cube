@@ -1,6 +1,8 @@
 # Revit Rubik's Cube (pyRevit)
 
-Small pyRevit toolset to rotate and solve a Rubik's Cube modeled in Revit.
+The first Rubik's Cube project in the world built for Revit, with live turns and solve workflow directly in pyRevit.
+
+An exciting pyRevit toolset to rotate and solve a Rubik's Cube modeled in Revit.
 
 ## What It Does
 - Adds ribbon buttons for clockwise and counter-clockwise face turns (`U/D/L/R/F/B`).
@@ -20,9 +22,16 @@ Small pyRevit toolset to rotate and solve a Rubik's Cube modeled in Revit.
 - `Counter Clockwise Rotation`
 - `Solve`
 
+## pyRevit Dependencies
+1. Install Autodesk Revit.
+2. Install pyRevit and attach it to your Revit version.
+3. Place this extension folder in a pyRevit extensions path:
+   - `Rubiks Cube.extension`
+4. Reload pyRevit (`pyRevit > Reload`).
+
+Notes:
+- Python solver dependencies are bundled in `Rubiks Cube.extension/lib`.
+- No extra `pip install` is required for normal use.
+
 ## Basic Workflow
-1. Set cubie `Comments = Cubeys` and unique `Mark` values.
-2. Click `Initialize`.
-3. Use rotation buttons to scramble.
-4. Click `Solve Cube` to get moves.
-5. Use `Validate State` if anything looks out of sync.
+Use the provided `Rubiks Cube.rvt` project and run the buttons from the pyRevit ribbon.
